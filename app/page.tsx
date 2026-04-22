@@ -74,7 +74,7 @@ export default function Home() {
       const prevSeen = LS.get<string[]>("apt_seen") || [];
       const seenSet = new Set(prevSeen);
       const newOnes = fresh.filter(a => !seenSet.has(a.id));
-      const updatedSeen = [...seenSet, ...fresh.map(a => a.id)];
+      const updatedSeen = Array.from(seenSet).concat(fresh.map(a => a.id));
       LS.set("apt_seen", updatedSeen);
 
       setResults(prev => {
