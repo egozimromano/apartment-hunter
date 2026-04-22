@@ -2,7 +2,39 @@
 // Free tier: https://aistudio.google.com/app/apikey
 
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-const MODEL = "gemini-2.5-flash";
+// Try models in order — fall back if one is overloaded
+const MODELS = ["gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash"];
+
+async function tryModel(model: string, body: any, key: string): Promise<string | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch(`${API_BASE}/${model}:generateContent?key=${key}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (res.status === 429 || res.status === 503) {
+      // Wait and retry same model once
+      if (attempt === 0) {
+        await new Promise((r) => setTimeout(r, 1500));
+        continue;
+      }
+      return null; // Let caller try next model
+    }
+
+    if (!res.ok) {
+      const err = await res.text();
+      console.error(`Gemini ${model} error ${res.status}: ${err}`);
+      return null;
+    }
+
+    const data = await res.json();
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (text) return text;
+    return null;
+  }
+  return null;
+}
 
 export async function gemini(prompt: string, systemPrompt?: string): Promise<string> {
   const key = process.env.GEMINI_API_KEY;
@@ -16,39 +48,16 @@ export async function gemini(prompt: string, systemPrompt?: string): Promise<str
     body.systemInstruction = { parts: [{ text: systemPrompt }] };
   }
 
-  // Retry up to 3 times with exponential backoff on 429/503
-  let lastErr: any;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const res = await fetch(`${API_BASE}/${MODEL}:generateContent?key=${key}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      if (res.status === 429 || res.status === 503) {
-        const err = await res.text();
-        lastErr = new Error(`Gemini error ${res.status}: ${err}`);
-        // Wait 2^attempt seconds (1s, 2s, 4s)
-        await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 1000));
-        continue;
-      }
-
-      if (!res.ok) {
-        const err = await res.text();
-        throw new Error(`Gemini error ${res.status}: ${err}`);
-      }
-
-      const data = await res.json();
-      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) throw new Error("Empty Gemini response");
-      return text;
-    } catch (err) {
-      lastErr = err;
-      if (attempt === 2) break;
+  for (const model of MODELS) {
+    const result = await tryModel(model, body, key);
+    if (result) {
+      console.log(`Gemini succeeded with model: ${model}`);
+      return result;
     }
+    console.log(`Gemini ${model} unavailable, trying next...`);
   }
-  throw lastErr;
+
+  throw new Error("All Gemini models unavailable. Try again in a few minutes.");
 }
 
 export async function geminiJSON<T = any>(prompt: string, systemPrompt?: string): Promise<T> {
