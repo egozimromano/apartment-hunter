@@ -35,7 +35,6 @@ export default function Home() {
 
   const [isSearching, setIsSearching] = useState(false);
   const [isChatSending, setIsChatSending] = useState(false);
-  const [newAlerts, setNewAlerts] = useState<ScoredApartment[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [pushLoading, setPushLoading] = useState(false);
   const [hydrated, setHydrated] = useState(false);
@@ -81,7 +80,7 @@ export default function Home() {
     setActiveSearchId(null);
     setShowChat(false);
     setShowMenu(false);
-    setNewAlerts([]);
+
     refreshSearches();
   };
 
@@ -89,7 +88,7 @@ export default function Home() {
     setActiveId(id);
     setActiveSearchId(id);
     setView("search");
-    setNewAlerts([]);
+
     // Auto-search if never searched before
     const s = getSearchById(id);
     if (s && s.searchCount === 0) {
@@ -161,7 +160,6 @@ export default function Home() {
       if (data.learned_insights) {
         updateSearch(id, { insights: data.learned_insights });
       }
-      if (newOnes.length > 0) setNewAlerts((prev) => [...newOnes, ...prev].slice(0, 20));
       refreshSearches();
     } catch (e: any) {
       setError(e.message);
@@ -182,7 +180,7 @@ export default function Home() {
   const handleHide = (aptId: string) => {
     if (!activeId) return;
     hideAptStorage(activeId, aptId);
-    setNewAlerts((prev) => prev.filter((a) => a.id !== aptId));
+
     refreshSearches();
   };
 
@@ -197,122 +195,7 @@ export default function Home() {
         case "updateFilters":
           updatedFilters = { ...updatedFilters, ...a.filters };
           break;
-        case "runSearch":
-          shouldRunSearch = true;
-          break;
-        case "hideApartment":
-          hideAptStorage(activeId, a.aptId);
-          break;
-        case "hideMany":
-          hideManyStorage(activeId, a.aptIds);
-          break;
-        case "clearHidden":
-          unhideAll(activeId);
-          break;
-      }
-    }
-
-    if (JSON.stringify(updatedFilters) !== JSON.stringify(activeSearch.filters)) {
-      updateSearch(activeId, { filters: updatedFilters });
-    }
-    refreshSearches();
-
-    if (shouldRunSearch) {
-      await runSearchFor(activeId);
-    }
-  };
-
-  const handleChatSend = async (text: string) => {
-    if (!activeId || !activeSearch) return;
-    setIsChatSending(true);
-
-    const userMsg: ChatMessage = { id: genId(), role: "user", text, timestamp: Date.now() };
-    addChatMessage(activeId, userMsg);
-    refreshSearches();
-
-    try {
-      const visibleApts = (activeSearch.results || [])
-        .filter((a) => !activeSearch.hiddenIds.includes(a.id))
-        .slice(0, 20)
-        .map((a) => ({ id: a.id, title: a.title, price: a.price, rooms: a.rooms, neighborhood: a.neighborhood, city: a.city }));
-
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userMessage: text,
-          history: activeSearch.chatHistory,
-          currentFilters: activeSearch.filters,
-          currentFreeText: activeSearch.freeText,
-          visibleApartments: visibleApts,
-        }),
-      });
-      const data = await res.json();
-      const assistantMsg: ChatMessage = {
-        id: genId(),
-        role: "assistant",
-        text: data.reply || "בוצע.",
-        timestamp: Date.now(),
-        actions: data.actions || [],
-      };
-      addChatMessage(activeId, assistantMsg);
-      refreshSearches();
-
-      if (Array.isArray(data.actions) && data.actions.length > 0) {
-        await applyChatActions(data.actions);
-      }
-    } catch (e: any) {
-      const errMsg: ChatMessage = { id: genId(), role: "assistant", text: `שגיאה: ${e.message}`, timestamp: Date.now() };
-      addChatMessage(activeId, errMsg);
-      refreshSearches();
-    } finally {
-      setIsChatSending(false);
-    }
-  };
-
-  // ─── Push ──────────────────────────────────────────────────
-  const togglePush = async () => {
-    if (!activeSearch) return;
-    setPushLoading(true);
-    try {
-      if (activeSearch.pushEnabled) {
-        await unsubscribeFromPush();
-        updateSearch(activeSearch.id, { pushEnabled: false });
-      } else {
-        const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-        if (!vapidKey) { setError("מפתח VAPID לא מוגדר"); return; }
-        const ok = await subscribeToPush(vapidKey, activeSearch.freeText || activeSearch.name);
-        if (ok) updateSearch(activeSearch.id, { pushEnabled: true });
-        else setError("אישור התראות נדחה או לא נתמך");
-      }
-      refreshSearches();
-    } finally {
-      setPushLoading(false);
-    }
-  };
-
-  // ─── Renders ───────────────────────────────────────────────
-  if (!hydrated) {
-    return <div style={{ minHeight: "100dvh", background: "var(--bg)" }} />;
-  }
-
-  return (
-    <>
-      {view === "list" && (
-        <SearchesList
-          searches={searches}
-          onOpen={openSearch}
-          onEdit={openEdit}
-          onDelete={handleDelete}
-          onNew={openNew}
-          onSettings={() => setShowSettings(true)}
-        />
-      )}
-
-      {view === "new" && (
-        <SearchForm
-          onSave={handleSaveNew}
-          onCancel={() => setView(activeId ? "search" : "list")}
+< truncated lines 198-313 >
         />
       )}
 
@@ -328,7 +211,6 @@ export default function Home() {
         <SearchView
           search={activeSearch}
           isSearching={isSearching}
-          newAlerts={newAlerts}
           error={error}
           pushLoading={pushLoading}
           showMenu={showMenu}
@@ -339,7 +221,6 @@ export default function Home() {
           onOpenChat={() => setShowChat(true)}
           onFeedback={handleFeedback}
           onHide={handleHide}
-          onDismissAlert={(id) => setNewAlerts((p) => p.filter((a) => a.id !== id))}
           onDismissError={() => setError(null)}
           onTogglePush={togglePush}
         />
@@ -369,7 +250,6 @@ export default function Home() {
 interface SearchViewProps {
   search: SavedSearch;
   isSearching: boolean;
-  newAlerts: ScoredApartment[];
   error: string | null;
   pushLoading: boolean;
   showMenu: boolean;
@@ -380,14 +260,20 @@ interface SearchViewProps {
   onOpenChat: () => void;
   onFeedback: (aptId: string, tag: FeedbackTag) => void;
   onHide: (aptId: string) => void;
-  onDismissAlert: (id: string) => void;
   onDismissError: () => void;
   onTogglePush: () => void;
 }
 
 function SearchView(p: SearchViewProps) {
-  const { search, isSearching, newAlerts, error, pushLoading, showMenu, setShowMenu } = p;
-  const visibleResults = search.results.filter((a) => !search.hiddenIds.includes(a.id));
+  const { search, isSearching, error, pushLoading, showMenu, setShowMenu } = p;
+  // Sort: unseen first, seen last
+  const visibleResults = search.results
+    .filter((a) => !search.hiddenIds.includes(a.id))
+    .sort((a, b) => {
+      const aSeen = (search.feedback[a.id] || []).includes('seen' as any) ? 1 : 0;
+      const bSeen = (search.feedback[b.id] || []).includes('seen' as any) ? 1 : 0;
+      return aSeen - bSeen;
+    });
 
   return (
     <div style={{ minHeight: "100dvh", background: "var(--bg)" }}>
@@ -460,23 +346,6 @@ function SearchView(p: SearchViewProps) {
           </div>
         )}
 
-        {newAlerts.length > 0 && (
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: "var(--fs-sm)", fontWeight: 700, color: "var(--warning)", marginBottom: 8 }}>🔔 {newAlerts.length} דירות חדשות!</div>
-            <div className="anim-stagger">
-              {newAlerts.slice(0, 5).map((apt) => (
-                <div key={apt.id} style={{ background: "var(--surface)", border: "1.5px solid var(--warning)", borderRadius: 12, padding: "10px 14px", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: "var(--fs-sm)", fontWeight: 600, color: "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{apt.title}</div>
-                    <div style={{ fontSize: "var(--fs-sm)", color: "var(--text-dim)" }}>{[apt.neighborhood, apt.city].filter(Boolean).join(", ")}{apt.price ? ` · ${apt.price.toLocaleString("he-IL")} ₪` : ""}</div>
-                  </div>
-                  <button onClick={() => p.onDismissAlert(apt.id)} style={{ padding: "6px 10px", background: "transparent", border: "1px solid var(--border-2)", color: "var(--text-dim)", borderRadius: 8, fontSize: "var(--fs-sm)", cursor: "pointer", flexShrink: 0 }}>✕</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {isSearching && visibleResults.length === 0 && (
           <div style={{ textAlign: "center", padding: "60px 0", color: "var(--text-faint)" }}>
             <div style={{ fontSize: "40px", marginBottom: 12, animation: "pulse 1.5s ease-in-out infinite" }}>🔍</div>
@@ -498,7 +367,6 @@ function SearchView(p: SearchViewProps) {
                   tags={search.feedback[apt.id] || []}
                   onFeedback={p.onFeedback}
                   onHide={p.onHide}
-                  isNew={newAlerts.some((a) => a.id === apt.id)}
                 />
               ))}
             </div>
