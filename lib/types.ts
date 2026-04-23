@@ -23,7 +23,8 @@ export interface ScoredApartment extends RawApartment {
 
 export type FeedbackTag =
   | "too_expensive" | "too_far" | "too_small" | "bad_area"
-  | "no_parking"   | "no_elevator" | "loved_it" | "interested" | "contacted";
+  | "no_parking"   | "no_elevator" | "loved_it" | "interested" | "contacted"
+  | "seen" | "hidden_permanent";
 
 export interface FeedbackMap {
   [aptId: string]: FeedbackTag[];
