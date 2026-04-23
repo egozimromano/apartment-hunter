@@ -7,7 +7,6 @@ import { StructuredFilters } from "@/lib/types";
 export const maxDuration = 60;
 
 function mergeFilters(parsed: any, structured: StructuredFilters) {
-  // Structured filters win when explicitly set; otherwise fall back to parsed from free text.
   return {
     ...parsed,
     city: structured.city || parsed.city,
@@ -28,6 +27,9 @@ export async function POST(req: NextRequest) {
     const structured: StructuredFilters = body.filters || {};
     const feedbackSummary: string = body.feedbackSummary || "";
     const previousInsights: string = body.previousInsights || "";
+    const globalHiddenIds: string[] = body.globalHiddenIds || [];
+    const globalInstructions: string = body.globalInstructions || "";
+    const globalLearnedInsights: string = body.globalLearnedInsights || "";
 
     if (!userQuery && !structured.city) {
       return NextResponse.json({ error: "userQuery or filters.city required" }, { status: 400 });
@@ -35,17 +37,23 @@ export async function POST(req: NextRequest) {
 
     const parsed = userQuery
       ? await parseQuery(userQuery)
-      : { city: "", rooms_min: null, rooms_max: null, price_min: null, price_max: null, must_have: [], neighborhoods: [] };
+      : { city: "", rooms_min: null, rooms_max: null, price_min: null, price_max: null, must_have: [], neighborhoods: [], raw_text: "", deal_breakers: [] };
 
     const merged = mergeFilters(parsed, structured);
 
     const { apartments, sources, errors } = await searchAndExtract(merged);
 
+    // Filter out globally hidden apartments
+    const hiddenSet = new Set(globalHiddenIds);
+    const filteredApts = apartments.filter((a) => !hiddenSet.has(a.id));
+
     const { scored, insights } = await scoreApartments(
-      apartments,
+      filteredApts,
       merged,
       feedbackSummary,
-      previousInsights
+      previousInsights,
+      globalInstructions,
+      globalLearnedInsights
     );
 
     return NextResponse.json({
