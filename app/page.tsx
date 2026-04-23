@@ -178,187 +178,246 @@ export default function Home() {
     } finally {
       setIsSearching(false);
     }
-    "use client";
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import {
-  SavedSearch, UserSettings, DEFAULT_SETTINGS,
-  ScoredApartment, FeedbackTag, ChatMessage, ChatAction, StructuredFilters,
-  AgentSettings, GlobalHiddenEntry,
-} from "@/lib/types";
-import {
-  getAllSearches, getSearchById, upsertSearch, deleteSearch as deleteSearchStorage,
-  newSearch, getActiveSearchId, setActiveSearchId,
-  setFeedback as setFeedbackStorage, hideApartment as hideAptStorage, hideMany as hideManyStorage,
-  unhideAll, mergeResults, getSettings, saveSettings, migrateV1IfNeeded, addChatMessage, genId,
-  updateSearch, getAgentSettings, saveAgentSettings, updateLearnedInsights,
-  getGlobalHidden, addToGlobalHidden, removeFromGlobalHidden, getGlobalHiddenIds,
-} from "@/lib/storage";
-import { applySettings, watchSystemTheme } from "@/lib/theme";
-import { buildFeedbackSummary } from "@/lib/constants";
-import { subscribeToPush, unsubscribeFromPush, getSubscriptionStatus } from "@/lib/push";
-import SearchesList from "@/components/SearchesList";
-import SearchForm from "@/components/SearchForm";
-import SettingsPanel from "@/components/SettingsPanel";
-import ChatPanel from "@/components/ChatPanel";
-import ApartmentCard from "@/components/ApartmentCard";
-import AgentSettingsScreen from "@/components/AgentSettingsScreen";
+  }, [isSearching]);
 
-type View = "list" | "new" | "edit" | "search" | "agent";
+  const runActiveSearch = () => { if (activeId) runSearchFor(activeId); };
 
-export default function Home() {
-  const [view, setView] = useState<View>("list");
-  const [searches, setSearches] = useState<SavedSearch[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  // ─── Agent settings ────────────────────────────────────────
+  const handleSaveAgentSettings = (s: AgentSettings) => {
+    saveAgentSettings(s);
+    setAgentSettings(s);
+  };
 
-  const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
-  const [showSettings, setShowSettings] = useState(false);
-  const [showChat, setShowChat] = useState(false);
-  const [showMenu, setShowMenu] = useState(false);
-
-  const [agentSettings, setAgentSettings] = useState<AgentSettings>({ userInstructions: "", learnedInsights: "", updatedAt: 0 });
-  const [globalHidden, setGlobalHidden] = useState<GlobalHiddenEntry[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [isChatSending, setIsChatSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [pushLoading, setPushLoading] = useState(false);
-  const [hydrated, setHydrated] = useState(false);
-
-  const autoRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Initial load
-  useEffect(() => {
-    const s = getSettings();
-    setSettings(s);
-    applySettings(s);
-    migrateV1IfNeeded();
-    const list = getAllSearches();
-    setSearches(list);
-    const aid = getActiveSearchId();
-    if (aid && list.find((x) => x.id === aid)) {
-      setActiveId(aid);
-      setView("search");
-    }
-    setAgentSettings(getAgentSettings());
+  const handleRemoveHidden = (id: string) => {
+    removeFromGlobalHidden(id);
     setGlobalHidden(getGlobalHidden());
-    setHydrated(true);
-  }, []);
-
-  // Re-apply theme whenever settings change; also watch OS preference if auto
-  useEffect(() => {
-    applySettings(settings);
-    return watchSystemTheme(settings, () => applySettings(settings));
-  }, [settings]);
-
-  const refreshSearches = () => setSearches(getAllSearches());
-  const activeSearch: SavedSearch | null = activeId ? searches.find((s) => s.id === activeId) || null : null;
-  const editingSearch: SavedSearch | null = editingId ? searches.find((s) => s.id === editingId) || null : null;
-
-  // ─── Settings ──────────────────────────────────────────────
-  const handleSettingsChange = (s: UserSettings) => {
-    setSettings(s);
-    saveSettings(s);
   };
 
-  // ─── Navigation ────────────────────────────────────────────
-  const goHome = () => {
-    setView("list");
-    setActiveId(null);
-    setActiveSearchId(null);
-    setShowChat(false);
-    setShowMenu(false);
+  const handleClearHidden = () => {
+    getGlobalHidden().forEach((e) => removeFromGlobalHidden(e.id));
+    setGlobalHidden([]);
+  };
 
+  // ─── Feedback / hide ───────────────────────────────────────
+  const handleFeedback = (aptId: string, tag: FeedbackTag) => {
+    if (!activeId) return;
+    setFeedbackStorage(activeId, aptId, tag);
     refreshSearches();
   };
 
-  const openSearch = (id: string) => {
-    setActiveId(id);
-    setActiveSearchId(id);
-    setView("search");
-
-    // Auto-search if never searched before
-    const s = getSearchById(id);
-    if (s && s.searchCount === 0) {
-      setTimeout(() => runSearchFor(id), 200);
-    }
-  };
-
-  const openNew = () => {
-    setEditingId(null);
-    setView("new");
-  };
-
-  const openEdit = (id: string) => {
-    setEditingId(id);
-    setView("edit");
-  };
-
-  // ─── CRUD ──────────────────────────────────────────────────
-  const handleSaveNew = (name: string, freeText: string, filters: StructuredFilters) => {
-    const s = newSearch(name, freeText, filters);
-    upsertSearch(s);
-    refreshSearches();
-    setActiveId(s.id);
-    setActiveSearchId(s.id);
-    setView("search");
-    setTimeout(() => runSearchFor(s.id), 300);
-  };
-
-  const handleSaveEdit = (name: string, freeText: string, filters: StructuredFilters) => {
-    if (!editingSearch) return;
-    updateSearch(editingSearch.id, { name, freeText, filters });
-    refreshSearches();
-    setEditingId(null);
-    setView(activeId ? "search" : "list");
-  };
-
-  const handleDelete = (id: string) => {
-    deleteSearchStorage(id);
-    if (activeId === id) {
-      setActiveId(null);
-      setActiveSearchId(null);
+  const handleHide = (aptId: string) => {
+    if (!activeId) return;
+    hideAptStorage(activeId, aptId);
+    // Also add to global hidden list
+    const s = getSearchById(activeId);
+    const apt = s?.results.find((a) => a.id === aptId);
+    if (apt) {
+      addToGlobalHidden({ id: apt.id, title: apt.title, url: apt.url });
+      setGlobalHidden(getGlobalHidden());
     }
     refreshSearches();
   };
 
-  // ─── Search execution ──────────────────────────────────────
-  const runSearchFor = useCallback(async (id: string) => {
-    const s = getSearchById(id);
-    if (!s || isSearching) return;
-    setIsSearching(true);
-    setError(null);
+  // ─── Chat actions ──────────────────────────────────────────
+  const applyChatActions = async (actions: ChatAction[]) => {
+    if (!activeId || !activeSearch) return;
+    let shouldRunSearch = false;
+    let updatedFilters = { ...activeSearch.filters };
+
+    for (const a of actions) {
+      switch (a.type) {
+        case "updateFilters":
+          updatedFilters = { ...updatedFilters, ...a.filters };
+          break;
+        case "runSearch":
+          shouldRunSearch = true;
+          break;
+        case "hideApartment":
+          hideAptStorage(activeId, a.aptId);
+          break;
+        case "hideMany":
+          hideManyStorage(activeId, a.aptIds);
+          break;
+        case "clearHidden":
+          unhideAll(activeId);
+          break;
+      }
+    }
+
+    if (JSON.stringify(updatedFilters) !== JSON.stringify(activeSearch.filters)) {
+      updateSearch(activeId, { filters: updatedFilters });
+    }
+    refreshSearches();
+
+    if (shouldRunSearch) {
+      await runSearchFor(activeId);
+    }
+  };
+
+  const handleChatSend = async (text: string) => {
+    if (!activeId || !activeSearch) return;
+    setIsChatSending(true);
+
+    const userMsg: ChatMessage = { id: genId(), role: "user", text, timestamp: Date.now() };
+    addChatMessage(activeId, userMsg);
+    refreshSearches();
+
     try {
-      const res = await fetch("/api/search", {
+      const visibleApts = (activeSearch.results || [])
+        .filter((a) => !activeSearch.hiddenIds.includes(a.id))
+        .slice(0, 20)
+        .map((a) => ({ id: a.id, title: a.title, price: a.price, rooms: a.rooms, neighborhood: a.neighborhood, city: a.city }));
+
+      const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          userQuery: s.freeText,
-          filters: s.filters,
-          feedbackSummary: buildFeedbackSummary(s.feedback),
-          previousInsights: s.insights,
-          globalHiddenIds: Array.from(getGlobalHiddenIds()),
-          globalInstructions: getAgentSettings().userInstructions,
-          globalLearnedInsights: getAgentSettings().learnedInsights,
+          userMessage: text,
+          history: activeSearch.chatHistory,
+          currentFilters: activeSearch.filters,
+          currentFreeText: activeSearch.freeText,
+          visibleApartments: visibleApts,
         }),
       });
-      if (!res.ok) throw new Error(`API error ${res.status}`);
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      const assistantMsg: ChatMessage = {
+        id: genId(),
+        role: "assistant",
+        text: data.reply || "בוצע.",
+        timestamp: Date.now(),
+        actions: data.actions || [],
+      };
+      addChatMessage(activeId, assistantMsg);
+      refreshSearches();
 
-      const fresh: ScoredApartment[] = data.apartments || [];
-      const { newOnes } = mergeResults(id, fresh);
-      if (data.learned_insights) {
-        updateSearch(id, { insights: data.learned_insights });
-        updateLearnedInsights(data.learned_insights);
-        setAgentSettings(getAgentSettings());
+      if (Array.isArray(data.actions) && data.actions.length > 0) {
+        await applyChatActions(data.actions);
+      }
+    } catch (e: any) {
+      const errMsg: ChatMessage = { id: genId(), role: "assistant", text: `שגיאה: ${e.message}`, timestamp: Date.now() };
+      addChatMessage(activeId, errMsg);
+      refreshSearches();
+    } finally {
+      setIsChatSending(false);
+    }
+  };
+
+  // ─── Push ──────────────────────────────────────────────────
+  const togglePush = async () => {
+    if (!activeSearch) return;
+    setPushLoading(true);
+    try {
+      if (activeSearch.pushEnabled) {
+        await unsubscribeFromPush();
+        updateSearch(activeSearch.id, { pushEnabled: false });
+      } else {
+        const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+        if (!vapidKey) { setError("מפתח VAPID לא מוגדר"); return; }
+        const ok = await subscribeToPush(vapidKey, activeSearch.freeText || activeSearch.name);
+        if (ok) updateSearch(activeSearch.id, { pushEnabled: true });
+        else setError("אישור התראות נדחה או לא נתמך");
       }
       refreshSearches();
-    } catch (e: any) {
-      setError(e.message);
     } finally {
-      setIsSearching(false);
+      setPushLoading(false);
     }
-    onEdit: () => void;
+  };
+
+  // ─── Renders ───────────────────────────────────────────────
+  if (!hydrated) {
+    return <div style={{ minHeight: "100dvh", background: "var(--bg)" }} />;
+  }
+
+  return (
+    <>
+      {view === "list" && (
+        <SearchesList
+          searches={searches}
+          onOpen={openSearch}
+          onEdit={openEdit}
+          onDelete={handleDelete}
+          onNew={openNew}
+          onSettings={() => setShowSettings(true)}
+          onAgentSettings={() => setView("agent")}
+        />
+      )}
+
+      {view === "agent" && (
+        <AgentSettingsScreen
+          settings={agentSettings}
+          hiddenList={globalHidden}
+          onSave={handleSaveAgentSettings}
+          onRemoveHidden={handleRemoveHidden}
+          onClearHidden={handleClearHidden}
+          onBack={() => setView("list")}
+        />
+      )}
+
+      {view === "new" && (
+        <SearchForm
+          onSave={handleSaveNew}
+          onCancel={() => setView(activeId ? "search" : "list")}
+        />
+      )}
+
+      {view === "edit" && editingSearch && (
+        <SearchForm
+          initial={editingSearch}
+          onSave={handleSaveEdit}
+          onCancel={() => { setEditingId(null); setView(activeId ? "search" : "list"); }}
+        />
+      )}
+
+      {view === "search" && activeSearch && (
+        <SearchView
+          search={activeSearch}
+          isSearching={isSearching}
+          error={error}
+          pushLoading={pushLoading}
+          showMenu={showMenu}
+          setShowMenu={setShowMenu}
+          onBack={goHome}
+          onSearch={runActiveSearch}
+          onEdit={() => openEdit(activeSearch.id)}
+          onOpenChat={() => setShowChat(true)}
+          onFeedback={handleFeedback}
+          onHide={handleHide}
+          onDismissError={() => setError(null)}
+          onTogglePush={togglePush}
+        />
+      )}
+
+      {showSettings && (
+        <SettingsPanel
+          settings={settings}
+          onChange={handleSettingsChange}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
+
+      {showChat && activeSearch && (
+        <ChatPanel
+          history={activeSearch.chatHistory}
+          onSend={handleChatSend}
+          onClose={() => setShowChat(false)}
+          isSending={isChatSending}
+        />
+      )}
+    </>
+  );
+}
+
+// ─── Search View (inline component) ──────────────────────────
+interface SearchViewProps {
+  search: SavedSearch;
+  isSearching: boolean;
+  error: string | null;
+  pushLoading: boolean;
+  showMenu: boolean;
+  setShowMenu: (v: boolean) => void;
+  onBack: () => void;
+  onSearch: () => void;
+  onEdit: () => void;
   onOpenChat: () => void;
   onFeedback: (aptId: string, tag: FeedbackTag) => void;
   onHide: (aptId: string) => void;
